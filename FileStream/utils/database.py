@@ -231,6 +231,28 @@ class Database:
             return_document=ReturnDocument.AFTER,
         )
 
+    async def get_verification_session(self, one_time_code):
+        await self.ensure_indexes()
+        return await self.verify_sessions.find_one({"one_time_code": str(one_time_code)})
+
+    async def complete_verification_by_code(self, one_time_code):
+        await self.ensure_indexes()
+        now = int(time.time())
+        return await self.verify_sessions.find_one_and_update(
+            {
+                "one_time_code": str(one_time_code),
+                "used": {"$ne": True},
+                "expires_at": {"$gt": now},
+            },
+            {
+                "$set": {
+                    "used": True,
+                    "completed_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
     async def redeem_coupon_once_per_user(self, code, user_id):
         await self.ensure_indexes()
         now = int(time.time())

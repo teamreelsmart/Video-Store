@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verification</title>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: Arial, sans-serif;
+            padding: 16px;
+        }
+
+        .card {
+            max-width: 560px;
+            width: 100%;
+            background: #111827;
+            border: 1px solid #1f2937;
+            border-radius: 12px;
+            padding: 24px;
+            box-sizing: border-box;
+        }
+
+        .title {
+            margin: 0 0 12px;
+            font-size: 24px;
+        }
+
+        .message {
+            margin: 0;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+
+        .tag {
+            display: inline-block;
+            margin-bottom: 12px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .loading .tag {
+            background: #1d4ed8;
+            color: #dbeafe;
+        }
+
+        .success .tag {
+            background: #166534;
+            color: #dcfce7;
+        }
+
+        .error .tag {
+            background: #991b1b;
+            color: #fee2e2;
+        }
+
+        .countdown {
+            margin-top: 12px;
+            color: #93c5fd;
+        }
+
+        .link {
+            margin-top: 14px;
+        }
+
+        .link a {
+            color: #93c5fd;
+        }
+    </style>
+</head>
+<body>
+    <div class="card {{state}}">
+        <span class="tag">{{state}}</span>
+        <h1 class="title">Verification</h1>
+        <p class="message">{{message}}</p>
+
+        {% if state == 'loading' and redirect_url %}
+            <p class="countdown">Redirecting in <span id="counter">{{delay_seconds}}</span> seconds...</p>
+            <p class="link">If not redirected, <a href="{{redirect_url}}">continue manually</a>.</p>
+        {% endif %}
+    </div>
+
+    {% if state == 'loading' and redirect_url %}
+    <script>
+        (function () {
+            var seconds = {{delay_seconds}};
+            var counter = document.getElementById('counter');
+            var timer = setInterval(function () {
+                seconds -= 1;
+                if (counter && seconds >= 0) {
+                    counter.textContent = seconds;
+                }
+                if (seconds <= 0) {
+                    clearInterval(timer);
+                    window.location.href = "{{redirect_url}}";
+                }
+            }, 1000);
+        })();
+    </script>
+    {% endif %}
+</body>
+</html>
