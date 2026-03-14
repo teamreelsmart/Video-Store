@@ -58,6 +58,48 @@ async def private_receive_handler(bot: Client, message: Message):
         if not await is_user_joined(bot, message):
             return
 
+    state_doc = await db.get_user_state(message.from_user.id)
+    if state_doc and state_doc.get("state") == "awaiting_video_submission":
+        media = message.video or message.animation or message.video_note
+        if not media:
+            await message.reply_text("Please send a video, animation, or video note for submission.")
+            return
+
+        await db.clear_user_state(message.from_user.id)
+        submission = await db.create_video_submission(message.from_user.id, message)
+
+        await message.reply_text(
+            f"✅ Submission received. ID: <code>{submission['submission_id']}</code>\nStatus: pending review.",
+            parse_mode=ParseMode.HTML,
+        )
+
+        try:
+            await bot.copy_message(
+                chat_id=Telegram.REVIEW_CHANNEL_ID,
+                from_chat_id=message.chat.id,
+                message_id=message.id,
+                caption=(
+                    "#VideoSubmission\n"
+                    f"Submission ID: <code>{submission['submission_id']}</code>\n"
+                    f"User: <a href='tg://user?id={message.from_user.id}'>{message.from_user.first_name}</a> (<code>{message.from_user.id}</code>)\n"
+                    "Status: <b>pending</b>"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            await bot.send_message(
+                chat_id=Telegram.REVIEW_CHANNEL_ID,
+                text=(
+                    "#VideoSubmission\n"
+                    f"Submission ID: <code>{submission['submission_id']}</code>\n"
+                    f"Source message: <code>{message.chat.id}:{message.id}</code>\n"
+                    f"User ID: <code>{message.from_user.id}</code>\n"
+                    "Status: <b>pending</b>"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
     try:
         inserted_id = await db.add_file(get_file_info(message))
         await get_file_ids(False, inserted_id, multi_clients, message)

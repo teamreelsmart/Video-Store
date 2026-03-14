@@ -13,6 +13,7 @@ import logging
 import math
 import asyncio
 import random
+import time
 from FileStream import __version__
 from FileStream.bot import FileStream
 from FileStream.server.exceptions import FIleNotFound
@@ -48,7 +49,26 @@ async def start(bot: Client, message: Message):
     if not await verify_user(bot, message):
         return
 
-    usr_cmd = message.text.split("_")[-1]
+    start_parts = message.text.split(maxsplit=1)
+    start_arg = start_parts[1].strip() if len(start_parts) > 1 else ""
+
+    if start_arg.startswith("ref_"):
+        inviter_raw = start_arg.split("ref_", 1)[-1]
+        try:
+            inviter_id = int(inviter_raw)
+        except ValueError:
+            inviter_id = 0
+
+        if inviter_id and inviter_id != message.from_user.id:
+            user = await db.get_user(message.from_user.id) or {}
+            if not user.get("referred_by"):
+                await db.col.update_one(
+                    {"id": int(message.from_user.id)},
+                    {"$set": {"referred_by": int(inviter_id), "referred_at": int(time.time())}},
+                )
+                await message.reply_text("✅ Referral tag applied. Complete your first verification to unlock inviter reward.")
+
+    usr_cmd = start_arg.split("_")[-1] if start_arg else "/start"
     # 🌟 Select a random picture URL from the list
     try:
         random_start_pic = random.choice(Telegram.START_PICS)
@@ -198,6 +218,37 @@ async def my_files(bot: Client, message: Message):
         caption=f"Total files: {total_files}",
         reply_markup=InlineKeyboardMarkup(file_list)
     )
+
+
+@FileStream.on_message(filters.private & filters.text & ~filters.command(["start", "help", "about", "files"]))
+async def handle_user_states(bot: Client, message: Message):
+    if not await verify_user(bot, message):
+        return
+
+    state_doc = await db.get_user_state(message.from_user.id)
+    if not state_doc:
+        return
+
+    state = state_doc.get("state")
+    if state == "awaiting_coupon_code":
+        code = (message.text or "").strip().upper()
+        if not code:
+            await message.reply_text("Please send a valid coupon code.")
+            return
+
+        coupon = await db.redeem_coupon_once_per_user(code, message.from_user.id)
+        await db.clear_user_state(message.from_user.id)
+        if coupon is None:
+            await message.reply_text("❌ Invalid / inactive / expired coupon.")
+            return
+        if coupon is False:
+            await message.reply_text("⚠️ You already redeemed this coupon.")
+            return
+
+        reward_type = coupon.get("reward_type")
+        reward_value = coupon.get("reward_value")
+        await message.reply_text(f"✅ Coupon redeemed. Reward: {reward_type} = {reward_value}.")
+        return
 
 # MyselfNeon
 # Don't Remove Credit 🥺
