@@ -33,6 +33,7 @@ class Database:
         self.coupon_redemptions = self.db.coupon_redemptions
         self.video_submissions = self.db.video_submissions
         self.catalog_cache = self.db.catalog_cache
+        self.user_states = self.db.user_states
         self._indexes_initialized = False
 
     async def ensure_indexes(self):
@@ -47,6 +48,8 @@ class Database:
         )
         await self.referrals.create_index("invited_id", unique=True)
         await self.catalog_cache.create_index("channel_id", unique=True)
+        await self.video_submissions.create_index("submission_id", unique=True)
+        await self.user_states.create_index("user_id", unique=True)
         self._indexes_initialized = True
 
     # Accepts name and username
@@ -389,6 +392,135 @@ class Database:
             )
 
         return coupon
+
+
+    async def set_user_state(self, user_id, state, payload=None):
+        await self.ensure_indexes()
+        document = {
+            "user_id": int(user_id),
+            "state": str(state),
+            "payload": payload or {},
+            "updated_at": int(time.time()),
+        }
+        await self.user_states.update_one(
+            {"user_id": int(user_id)},
+            {"$set": document},
+            upsert=True,
+        )
+
+    async def get_user_state(self, user_id):
+        await self.ensure_indexes()
+        return await self.user_states.find_one({"user_id": int(user_id)})
+
+    async def clear_user_state(self, user_id):
+        await self.ensure_indexes()
+        await self.user_states.delete_one({"user_id": int(user_id)})
+
+    async def create_video_submission(self, user_id, media_message, note=None):
+        await self.ensure_indexes()
+        now = int(time.time())
+        submission_id = secrets.token_hex(6)
+        document = {
+            "submission_id": submission_id,
+            "user_id": int(user_id),
+            "chat_id": int(media_message.chat.id),
+            "message_id": int(media_message.id),
+            "status": "pending",
+            "note": note or "",
+            "created_at": now,
+            "reviewed_at": None,
+            "reviewed_by": None,
+        }
+        await self.video_submissions.insert_one(document)
+        return document
+
+    async def get_video_submission(self, submission_id):
+        await self.ensure_indexes()
+        return await self.video_submissions.find_one({"submission_id": str(submission_id)})
+
+    async def approve_video_submission(self, submission_id, admin_id):
+        await self.ensure_indexes()
+        return await self.video_submissions.find_one_and_update(
+            {"submission_id": str(submission_id), "status": "pending"},
+            {"$set": {"status": "approved", "reviewed_by": int(admin_id), "reviewed_at": int(time.time())}},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def create_coupon(self, code, reward_type, reward_value, expiry=None):
+        await self.ensure_indexes()
+        now = int(time.time())
+        document = {
+            "code": str(code).upper(),
+            "reward_type": str(reward_type),
+            "reward_value": int(reward_value),
+            "active": True,
+            "expiry": int(expiry) if expiry else None,
+            "created_at": now,
+        }
+        await self.coupons.update_one({"code": document["code"]}, {"$set": document}, upsert=True)
+        return document
+
+    async def deactivate_coupon(self, code):
+        await self.ensure_indexes()
+        return await self.coupons.find_one_and_update(
+            {"code": str(code).upper(), "active": True},
+            {"$set": {"active": False, "deactivated_at": int(time.time())}},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def get_coupon(self, code):
+        await self.ensure_indexes()
+        return await self.coupons.find_one({"code": str(code).upper()})
+
+    async def ensure_referral_reward(self, inviter_id, invited_id, reward_tokens):
+        await self.ensure_indexes()
+        now = int(time.time())
+        ref = await self.referrals.find_one({"invited_id": int(invited_id)})
+        if ref:
+            return None
+
+        try:
+            await self.referrals.insert_one({
+                "inviter_id": int(inviter_id),
+                "invited_id": int(invited_id),
+                "reward_tokens": int(reward_tokens),
+                "rewarded_at": now,
+            })
+        except DuplicateKeyError:
+            return None
+
+        access = await self.user_access.find_one_and_update(
+            {"user_id": int(inviter_id)},
+            {
+                "$setOnInsert": {"free_access_until": 0, "premium_until": 0},
+                "$inc": {"tokens": int(reward_tokens)},
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        return access
+
+    async def grant_premium_hours(self, user_id, hours):
+        await self.ensure_indexes()
+        now = int(time.time())
+        return await self.user_access.find_one_and_update(
+            {"user_id": int(user_id)},
+            [
+                {"$set": {"tokens": {"$ifNull": ["$tokens", 0]}, "free_access_until": {"$ifNull": ["$free_access_until", 0]}, "premium_until": {"$ifNull": ["$premium_until", 0]}}},
+                {"$set": {"premium_until": {"$add": [{"$max": ["$premium_until", now]}, int(hours) * 60 * 60]}}},
+            ],
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def revoke_premium(self, user_id):
+        await self.ensure_indexes()
+        return await self.user_access.find_one_and_update(
+            {"user_id": int(user_id)},
+            {"$set": {"premium_until": 0}, "$setOnInsert": {"tokens": 0, "free_access_until": 0}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
 
 
 # MyselfNeon

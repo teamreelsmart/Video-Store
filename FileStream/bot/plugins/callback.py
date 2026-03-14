@@ -13,6 +13,7 @@ import datetime
 import math
 import random
 import time
+from urllib.parse import quote_plus
 from FileStream import __version__
 from FileStream.bot import FileStream
 from FileStream.config import Telegram, Server
@@ -142,15 +143,36 @@ async def handle_menu_watch(bot, update: CallbackQuery):
 
 
 async def handle_menu_submit(update: CallbackQuery):
-    await show_help(update)
+    await db.set_user_state(update.from_user.id, "awaiting_video_submission")
+    await update.message.reply_text(
+        "🎬 <b>Send your video now.</b>\n\n"
+        "Please send a video/animation/video note in your next message."
+        " It will be submitted for admin review.",
+        parse_mode=ParseMode.HTML,
+    )
+    await update.answer("Waiting for your video.", show_alert=True)
 
 
 async def handle_menu_refer(update: CallbackQuery):
-    await update.answer("Referral program coming soon.", show_alert=True)
+    ref_code = f"ref_{update.from_user.id}"
+    referral_link = f"https://t.me/{FileStream.username}?start={quote_plus(ref_code)}"
+    await update.message.reply_text(
+        "🤝 <b>Your referral link</b>\n\n"
+        f"{referral_link}\n\n"
+        f"Reward: <b>{Telegram.REFERRAL_REWARD_TOKENS} tokens</b> when a referred user joins and verifies for the first time.",
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+    await update.answer("Referral link generated.", show_alert=True)
 
 
 async def handle_menu_coupon(update: CallbackQuery):
-    await update.answer("Coupon redemption will be available soon.", show_alert=True)
+    await db.set_user_state(update.from_user.id, "awaiting_coupon_code")
+    await update.message.reply_text(
+        "🎁 Send your coupon code in the next message.",
+        parse_mode=ParseMode.HTML,
+    )
+    await update.answer("Waiting for coupon code.", show_alert=True)
 
 
 async def handle_menu_help(update: CallbackQuery):
@@ -199,22 +221,25 @@ async def _create_verify_session(user_id, reward_type, reward_value, *, step=1, 
 
 
 async def handle_menu_premium(update: CallbackQuery):
+    plan_lines = [line.strip() for line in Telegram.PREMIUM_PLANS.split("|") if line.strip()]
+    plans = "\n".join([f"• {line}" for line in plan_lines]) or "• Contact admin for latest plans"
+    payment_note = f"UPI: <code>{Telegram.PREMIUM_UPI_ID}</code>\n" if Telegram.PREMIUM_UPI_ID else ""
+    keyboard = [
+        [InlineKeyboardButton("💬 Contact for Payment", url=Telegram.PREMIUM_SUPPORT_URL)],
+        [InlineKeyboardButton("⬅️ Back", callback_data="home")],
+    ]
     await update.message.edit_text(
         text=(
-            "<b>Choose a verification option:</b>\n\n"
-            "• <b>50 token</b>: single verification step\n"
-            "• <b>24 hours access</b>: complete step 1 then step 2"
+            "<b>💎 Buy Premium</b>\n\n"
+            "<b>Available plans</b>\n"
+            f"{plans}\n\n"
+            "<b>Payment instructions</b>\n"
+            f"{payment_note}"
+            "After payment, send screenshot to admin for manual confirmation."
         ),
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("50 token", callback_data="premium_tokens_50"),
-                    InlineKeyboardButton("24 hours access", callback_data="premium_access_24h"),
-                ],
-                [InlineKeyboardButton("⬅️ Back", callback_data="home")],
-            ]
-        ),
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
