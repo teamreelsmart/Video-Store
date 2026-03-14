@@ -61,11 +61,16 @@ class BUTTON(object):
     START_BUTTONS = InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton('Hᴇʟᴘ 🆘', callback_data='help'),
-                InlineKeyboardButton('Aʙᴏᴜᴛ 😎', callback_data='about')
+                InlineKeyboardButton('Watch Videos', callback_data='menu_watch'),
+                InlineKeyboardButton('Submit Video', callback_data='menu_submit')
             ],
             [
-                InlineKeyboardButton("🔥 Uᴘᴅᴀᴛᴇ Cʜᴀɴɴᴇʟ", url=f'https://t.me/{Telegram.UPDATES_CHANNEL}')
+                InlineKeyboardButton('Refer Friends', callback_data='menu_refer'),
+                InlineKeyboardButton('Redeem Coupon', callback_data='menu_coupon')
+            ],
+            [
+                InlineKeyboardButton('Help', callback_data='menu_help'),
+                InlineKeyboardButton('Buy Premium', callback_data='menu_premium')
             ]
         ]
     )
