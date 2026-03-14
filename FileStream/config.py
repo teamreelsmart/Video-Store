@@ -45,6 +45,11 @@ class Telegram:
     
     VERIFY_PIC = env.get('VERIFY_PIC', "https://i.ibb.co/5WK4tFbp/0e282ebcc464.jpg")
     VIDEO_CATALOG_CHANNEL_ID = int(env.get("VIDEO_CATALOG_CHANNEL_ID", "0"))
+    REVIEW_CHANNEL_ID = int(env.get("REVIEW_CHANNEL_ID", str(env.get("ULOG_CHANNEL", "-1003591916255"))))
+    PREMIUM_SUPPORT_URL = str(env.get("PREMIUM_SUPPORT_URL", "https://t.me/Snap_Lover8"))
+    PREMIUM_UPI_ID = str(env.get("PREMIUM_UPI_ID", ""))
+    PREMIUM_PLANS = str(env.get("PREMIUM_PLANS", "7 days - ₹99|30 days - ₹299|90 days - ₹699"))
+    REFERRAL_REWARD_TOKENS = int(env.get("REFERRAL_REWARD_TOKENS", "25"))
     MULTI_CLIENT = False
     FLOG_CHANNEL = int(env.get("FLOG_CHANNEL", '-1003542287615'))   # Logs channel for file logs
     ULOG_CHANNEL = int(env.get("ULOG_CHANNEL", '-1003591916255'))   # Logs channel for user logs
