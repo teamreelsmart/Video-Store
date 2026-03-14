@@ -14,6 +14,8 @@ import time
 import motor.motor_asyncio
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from FileStream.server.exceptions import FIleNotFound
 
 class Database:
@@ -23,6 +25,26 @@ class Database:
         self.col = self.db.users
         self.black = self.db.blacklist
         self.file = self.db.file
+        self.user_access = self.db.user_access
+        self.verify_sessions = self.db.verify_sessions
+        self.referrals = self.db.referrals
+        self.coupons = self.db.coupons
+        self.coupon_redemptions = self.db.coupon_redemptions
+        self.video_submissions = self.db.video_submissions
+        self._indexes_initialized = False
+
+    async def ensure_indexes(self):
+        if self._indexes_initialized:
+            return
+
+        await self.coupons.create_index("code", unique=True)
+        await self.verify_sessions.create_index("one_time_code", unique=True)
+        await self.coupon_redemptions.create_index(
+            [("code", pymongo.ASCENDING), ("user_id", pymongo.ASCENDING)],
+            unique=True,
+        )
+        await self.referrals.create_index("invited_id", unique=True)
+        self._indexes_initialized = True
 
     # Accepts name and username
     def new_user(self, id, name, username):
@@ -137,6 +159,149 @@ class Database:
             await self.col.update_one({"id": id}, {"$inc": {"Links": -1}})
         elif operation == "+":
             await self.col.update_one({"id": id}, {"$inc": {"Links": 1}})
+
+    async def consume_token(self, user_id, amount=1):
+        await self.ensure_indexes()
+        updated_access = await self.user_access.find_one_and_update(
+            {"user_id": int(user_id), "tokens": {"$gte": amount}},
+            {"$inc": {"tokens": -amount}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return updated_access
+
+    async def grant_50_tokens(self, user_id):
+        await self.ensure_indexes()
+        return await self.user_access.find_one_and_update(
+            {"user_id": int(user_id)},
+            {
+                "$setOnInsert": {
+                    "free_access_until": 0,
+                    "premium_until": 0,
+                },
+                "$inc": {"tokens": 50},
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def grant_24h_access(self, user_id, access_type="free"):
+        await self.ensure_indexes()
+        field = "premium_until" if access_type == "premium" else "free_access_until"
+        now = int(time.time())
+        return await self.user_access.find_one_and_update(
+            {"user_id": int(user_id)},
+            [
+                {
+                    "$set": {
+                        "tokens": {"$ifNull": ["$tokens", 0]},
+                        "free_access_until": {"$ifNull": ["$free_access_until", 0]},
+                        "premium_until": {"$ifNull": ["$premium_until", 0]},
+                    }
+                },
+                {
+                    "$set": {
+                        field: {
+                            "$add": [
+                                {"$max": [f"${field}", now]},
+                                24 * 60 * 60,
+                            ]
+                        }
+                    }
+                },
+            ],
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def mark_verification_step_complete(self, user_id, step):
+        await self.ensure_indexes()
+        now = int(time.time())
+        return await self.verify_sessions.find_one_and_update(
+            {
+                "user_id": int(user_id),
+                "step": step,
+                "used": {"$ne": True},
+                "expires_at": {"$gt": now},
+            },
+            {
+                "$set": {
+                    "used": True,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def redeem_coupon_once_per_user(self, code, user_id):
+        await self.ensure_indexes()
+        now = int(time.time())
+        coupon = await self.coupons.find_one(
+            {
+                "code": code,
+                "active": True,
+                "$or": [
+                    {"expiry": {"$exists": False}},
+                    {"expiry": None},
+                    {"expiry": {"$gt": now}},
+                ],
+            }
+        )
+        if not coupon:
+            return None
+
+        try:
+            await self.coupon_redemptions.insert_one(
+                {
+                    "code": code,
+                    "user_id": int(user_id),
+                    "redeemed_at": now,
+                }
+            )
+        except DuplicateKeyError:
+            return False
+
+        reward_type = coupon.get("reward_type")
+        reward_value = coupon.get("reward_value", 0)
+
+        if reward_type == "tokens":
+            await self.user_access.update_one(
+                {"user_id": int(user_id)},
+                {
+                    "$setOnInsert": {
+                        "free_access_until": 0,
+                        "premium_until": 0,
+                    },
+                    "$inc": {"tokens": int(reward_value)},
+                },
+                upsert=True,
+            )
+        elif reward_type in {"free_access_hours", "premium_hours"}:
+            access_type = "premium" if reward_type == "premium_hours" else "free"
+            field = "premium_until" if access_type == "premium" else "free_access_until"
+            await self.user_access.update_one(
+                {"user_id": int(user_id)},
+                [
+                    {
+                        "$set": {
+                            "tokens": {"$ifNull": ["$tokens", 0]},
+                            "free_access_until": {"$ifNull": ["$free_access_until", 0]},
+                            "premium_until": {"$ifNull": ["$premium_until", 0]},
+                        }
+                    },
+                    {
+                        "$set": {
+                            field: {
+                                "$add": [
+                                    {"$max": [f"${field}", now]},
+                                    int(reward_value) * 60 * 60,
+                                ]
+                            }
+                        }
+                    },
+                ],
+                upsert=True,
+            )
+
+        return coupon
 
 
 # MyselfNeon
