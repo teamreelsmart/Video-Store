@@ -195,6 +195,31 @@ class Database:
             upsert=True,
         )
 
+    async def get_random_video_files(self, limit=5):
+        pipeline = [
+            {
+                "$match": {
+                    "mime_type": {
+                        "$regex": "^video/",
+                        "$options": "i",
+                    }
+                }
+            },
+            {"$sample": {"size": int(limit)}},
+            {
+                "$project": {
+                    "_id": 1,
+                    "file_id": 1,
+                    "file_name": 1,
+                }
+            },
+        ]
+        cursor = self.file.aggregate(pipeline)
+        items = []
+        async for row in cursor:
+            items.append(row)
+        return items
+
     async def consume_token(self, user_id, amount=1):
         await self.ensure_indexes()
         updated_access = await self.user_access.find_one_and_update(

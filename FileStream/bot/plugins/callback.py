@@ -81,6 +81,35 @@ async def _refresh_video_catalog_cache(bot, limit=80):
     return file_ids
 
 
+async def _send_watch_video(update: CallbackQuery, video_doc, premium_active: bool):
+    file_id = video_doc.get("file_id")
+    file_db_id = str(video_doc.get("_id"))
+    if not file_id or not file_db_id:
+        return False
+
+    stream_url = f"{Server.URL}watch/{file_db_id}"
+    fast_dl_url = f"{Server.URL}dl/{file_db_id}"
+
+    if premium_active:
+        download_button = InlineKeyboardButton("⚡ Fast Download", url=fast_dl_url)
+    else:
+        download_button = InlineKeyboardButton("⚡ Fast Download (Premium)", callback_data="premium_dl_locked")
+
+    await update.message.reply_cached_media(
+        file_id=file_id,
+        caption="For stream online or fast download use below buttons.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🎬 Stream", url=stream_url),
+                    download_button,
+                ]
+            ]
+        ),
+    )
+    return True
+
+
 async def handle_menu_watch(bot, update: CallbackQuery):
     access_state = await db.get_access_state(update.from_user.id) or {}
     now = int(time.time())
@@ -112,34 +141,38 @@ async def handle_menu_watch(bot, update: CallbackQuery):
         await update.answer("Verification required.", show_alert=True)
         return
 
-    token_consumed = False
-    if not premium_active and not free_access_active and tokens > 0:
-        consumed = await db.consume_token(update.from_user.id, 1)
-        if not consumed:
-            await update.answer("Unable to consume token, please try again.", show_alert=True)
-            return
-        token_consumed = True
-
-    channel_id = int(getattr(Telegram, "VIDEO_CATALOG_CHANNEL_ID", 0) or 0)
-    file_ids = await db.get_catalog_file_ids(channel_id, max_age_seconds=900) if channel_id else []
-    if len(file_ids) < 5:
-        file_ids = await _refresh_video_catalog_cache(bot)
-
-    unique_ids = list(dict.fromkeys(file_ids))
-    if len(unique_ids) < 5:
+    random_videos = await db.get_random_video_files(limit=5)
+    if len(random_videos) < 5:
         await update.message.reply_text(
-            "Catalog is not ready yet. Ask admin to add at least 5 videos to source channel.",
+            "Catalog is not ready yet. Ask admin to add at least 5 videos.",
         )
         return
 
-    selected_ids = random.sample(unique_ids, 5)
-    for file_id in selected_ids:
-        await update.message.reply_cached_media(file_id=file_id)
+    sent_count = 0
+    token_deducted = 0
 
-    if token_consumed:
-        await update.answer("1 token used. Sent 5 random videos.", show_alert=True)
+    for video_doc in random_videos:
+        if not premium_active and not free_access_active:
+            consumed = await db.consume_token(update.from_user.id, 1)
+            if not consumed:
+                break
+            token_deducted += 1
+
+        delivered = await _send_watch_video(update, video_doc, premium_active)
+        if delivered:
+            sent_count += 1
+
+    if sent_count == 0:
+        await update.answer("No tokens left to send videos.", show_alert=True)
+        return
+
+    if token_deducted:
+        await update.answer(
+            f"Sent {sent_count} videos. Deducted {token_deducted} token(s).",
+            show_alert=True,
+        )
     else:
-        await update.answer("Sent 5 random videos.", show_alert=True)
+        await update.answer(f"Sent {sent_count} videos.", show_alert=True)
 
 
 async def handle_menu_submit(update: CallbackQuery):
@@ -260,6 +293,10 @@ async def cb_data(bot, update: CallbackQuery):
             await MENU_CALLBACK_SERVICES[callback_data](bot, update)
         else:
             await MENU_CALLBACK_SERVICES[callback_data](update)
+        return
+
+    if callback_data == "premium_dl_locked":
+        await update.answer("Fast Download is available for premium users only.", show_alert=True)
         return
 
     usr_cmd = callback_data.split("_")
