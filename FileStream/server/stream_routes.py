@@ -14,16 +14,93 @@ import math
 import logging
 import mimetypes
 import traceback
+import jinja2
+from urllib.parse import quote_plus
 from aiohttp import web
 from aiohttp.http_exceptions import BadStatusLine
 from FileStream.bot import multi_clients, work_loads, FileStream
 from FileStream.config import Telegram, Server
 from FileStream.server.exceptions import FIleNotFound, InvalidHash
 from FileStream import utils, StartTime, __version__
+from FileStream.utils.database import Database
 from FileStream.utils.render_template import render_page
 
 # Routes
 routes = web.RouteTableDef()
+db = Database(Telegram.DATABASE_URL, Telegram.SESSION_NAME)
+
+VERIFY_ERROR_LINK_USED = "link_used"
+VERIFY_ERROR_WRONG_STEP = "wrong_step"
+VERIFY_ERROR_INVALID_TOKEN = "invalid_token"
+
+
+def _render_verify_template(state, message, redirect_url=None, delay_seconds=5):
+    with open("FileStream/template/verify.html") as template_file:
+        template = jinja2.Template(template_file.read())
+
+    return web.Response(
+        text=template.render(
+            state=state,
+            message=message,
+            redirect_url=redirect_url,
+            delay_seconds=delay_seconds,
+        ),
+        content_type="text/html",
+    )
+
+
+def _build_callback_url(request, code):
+    return str(request.url.with_path(f"/verify/complete/{code}").with_query({}))
+
+
+def _build_shortner_url(session, callback_url):
+    shortner_url = (
+        session.get("shortner_url")
+        or session.get("shortener_url")
+        or session.get("short_url")
+        or session.get("url")
+    )
+
+    if not shortner_url:
+        return None
+
+    if "{callback}" in shortner_url:
+        return shortner_url.replace("{callback}", quote_plus(callback_url))
+
+    separator = "&" if "?" in shortner_url else "?"
+    return f"{shortner_url}{separator}callback={quote_plus(callback_url)}"
+
+
+def _verify_session_error(session, request):
+    if not session:
+        return VERIFY_ERROR_INVALID_TOKEN
+
+    now = int(time.time())
+    if session.get("used"):
+        return VERIFY_ERROR_LINK_USED
+
+    if int(session.get("expires_at", 0) or 0) <= now:
+        return VERIFY_ERROR_INVALID_TOKEN
+
+    required_uid = int(session.get("user_id", 0) or 0)
+    provided_uid = request.query.get("uid")
+    if required_uid:
+        if not provided_uid:
+            return VERIFY_ERROR_INVALID_TOKEN
+
+        try:
+            if int(provided_uid) != required_uid:
+                return VERIFY_ERROR_INVALID_TOKEN
+        except ValueError:
+            return VERIFY_ERROR_INVALID_TOKEN
+
+    expected_step = int(session.get("expected_step", 1) or 1)
+    current_step = int(session.get("step", 1) or 1)
+    if current_step != expected_step or expected_step != 1:
+        return VERIFY_ERROR_WRONG_STEP
+
+    return None
+
 
 # Status Route
 @routes.get("/", allow_head=True)
@@ -44,6 +121,57 @@ async def root_route_handler(_):
             "version": __version__,
         }
     )
+
+
+@routes.get("/verify/{code}", allow_head=True)
+async def verify_route_handler(request: web.Request):
+    code = request.match_info["code"]
+    session = await db.get_verification_session(code)
+    error_state = _verify_session_error(session, request)
+
+    if error_state == VERIFY_ERROR_LINK_USED:
+        return _render_verify_template("error", "This verification link has already been used.")
+
+    if error_state == VERIFY_ERROR_WRONG_STEP:
+        return _render_verify_template("error", "Wrong step order. Please complete Step 1 first.")
+
+    if error_state == VERIFY_ERROR_INVALID_TOKEN:
+        return _render_verify_template("error", "This verification token is invalid or has expired.")
+
+    callback_url = _build_callback_url(request, code)
+    shortner_url = _build_shortner_url(session, callback_url)
+
+    if not shortner_url:
+        return _render_verify_template("error", "This verification token is invalid or has expired.")
+
+    return _render_verify_template(
+        state="loading",
+        message="Verification accepted. Redirecting to shortner in 5 seconds...",
+        redirect_url=shortner_url,
+        delay_seconds=5,
+    )
+
+
+@routes.get("/verify/complete/{code}", allow_head=True)
+async def verify_complete_route_handler(request: web.Request):
+    code = request.match_info["code"]
+    session = await db.get_verification_session(code)
+
+    if not session:
+        return _render_verify_template("error", "This verification token is invalid or has expired.")
+
+    if session.get("used"):
+        return _render_verify_template("success", "Verification already completed. Reward was not duplicated.")
+
+    completed_session = await db.complete_verification_by_code(code)
+    if completed_session:
+        return _render_verify_template("success", "Verification completed successfully. Reward granted once.")
+
+    refreshed_session = await db.get_verification_session(code)
+    if refreshed_session and refreshed_session.get("used"):
+        return _render_verify_template("success", "Verification already completed. Reward was not duplicated.")
+
+    return _render_verify_template("error", "This verification token is invalid or has expired.")
 
 # Watch Route
 @routes.get("/watch/{path}", allow_head=True)
