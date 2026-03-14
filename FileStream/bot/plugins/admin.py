@@ -16,6 +16,7 @@ import random
 import asyncio
 import aiofiles
 import datetime
+from pymongo.errors import DuplicateKeyError
 
 from FileStream.utils.broadcast_helper import send_msg
 from FileStream.utils.database import Database
@@ -208,6 +209,106 @@ async def set_commands(client: Client, message: Message):
         await message.reply_text(f"✅ **__Success! Updated {len(commands)} Commands.__**")
     except Exception as e:
         await message.reply_text(f"❌ **__Error:__** `{e}`")
+
+
+@FileStream.on_message(filters.command("createcoupon") & filters.private & filters.user(Telegram.OWNER_ID))
+async def create_coupon_cmd(c: Client, m: Message):
+    if len(m.command) < 4:
+        return await m.reply_text("Usage: /createcoupon <code> <tokens|free_access_hours|premium_hours> <value> [expiry_hours]")
+
+    code = m.command[1].upper()
+    reward_type = m.command[2]
+    reward_value = int(m.command[3])
+    expiry = None
+    if len(m.command) > 4:
+        expiry = int(time.time()) + int(m.command[4]) * 60 * 60
+
+    try:
+        coupon = await db.create_coupon(code, reward_type, reward_value, expiry=expiry)
+    except DuplicateKeyError:
+        return await m.reply_text("Coupon already exists.")
+
+    await m.reply_text(f"✅ Coupon {coupon['code']} active.")
+
+
+@FileStream.on_message(filters.command("deactivatecoupon") & filters.private & filters.user(Telegram.OWNER_ID))
+async def deactivate_coupon_cmd(c: Client, m: Message):
+    if len(m.command) < 2:
+        return await m.reply_text("Usage: /deactivatecoupon <code>")
+    coupon = await db.deactivate_coupon(m.command[1])
+    if not coupon:
+        return await m.reply_text("Coupon not found or already inactive.")
+    await m.reply_text(f"✅ Coupon {coupon['code']} deactivated.")
+
+
+@FileStream.on_message(filters.command("approvesubmission") & filters.private & filters.user(Telegram.OWNER_ID))
+async def approve_submission_cmd(c: Client, m: Message):
+    if len(m.command) < 2:
+        return await m.reply_text("Usage: /approvesubmission <submission_id>")
+    submission_id = m.command[1]
+    approved = await db.approve_video_submission(submission_id, m.from_user.id)
+    if not approved:
+        return await m.reply_text("Submission not found or not pending.")
+
+    await m.reply_text(f"✅ Submission {submission_id} approved.")
+    try:
+        await c.send_message(approved['user_id'], f"✅ Your video submission {submission_id} was approved.")
+    except Exception:
+        pass
+
+
+@FileStream.on_message(filters.command("grantpremium") & filters.private & filters.user(Telegram.OWNER_ID))
+async def grant_premium_cmd(c: Client, m: Message):
+    if len(m.command) < 3:
+        return await m.reply_text("Usage: /grantpremium <user_id> <hours>")
+    user_id = int(m.command[1])
+    hours = int(m.command[2])
+    state = await db.grant_premium_hours(user_id, hours)
+    until = int(state.get('premium_until', 0))
+    await m.reply_text(f"✅ Premium granted for {hours}h to {user_id}. Until: {until}")
+
+
+@FileStream.on_message(filters.command("revokepremium") & filters.private & filters.user(Telegram.OWNER_ID))
+async def revoke_premium_cmd(c: Client, m: Message):
+    if len(m.command) < 2:
+        return await m.reply_text("Usage: /revokepremium <user_id>")
+    user_id = int(m.command[1])
+    await db.revoke_premium(user_id)
+    await m.reply_text(f"✅ Premium revoked for {user_id}.")
+
+
+@FileStream.on_message(filters.command("premiumconfirm") & filters.private & filters.user(Telegram.OWNER_ID))
+async def premium_confirm_cmd(c: Client, m: Message):
+    if len(m.command) < 3:
+        return await m.reply_text("Usage: /premiumconfirm <user_id> <hours>")
+    user_id = int(m.command[1])
+    hours = int(m.command[2])
+    await db.grant_premium_hours(user_id, hours)
+    await m.reply_text(f"✅ Premium purchase confirmed for {user_id} ({hours}h).")
+    try:
+        await c.send_message(user_id, f"💎 Your premium has been activated for {hours} hours.")
+    except Exception:
+        pass
+
+
+@FileStream.on_message(filters.command("audituser") & filters.private & filters.user(Telegram.OWNER_ID))
+async def audit_user_cmd(c: Client, m: Message):
+    if len(m.command) < 2:
+        return await m.reply_text("Usage: /audituser <user_id>")
+    user_id = int(m.command[1])
+    user = await db.get_user(user_id) or {}
+    access = await db.get_access_state(user_id) or {}
+    total_submissions = await db.video_submissions.count_documents({"user_id": user_id})
+    pending_submissions = await db.video_submissions.count_documents({"user_id": user_id, "status": "pending"})
+
+    await m.reply_text(
+        f"User: {user.get('name', 'Unknown')} (@{user.get('username', 'None')})\n"
+        f"ID: {user_id}\n"
+        f"Tokens: {access.get('tokens', 0)}\n"
+        f"Free access until: {access.get('free_access_until', 0)}\n"
+        f"Premium until: {access.get('premium_until', 0)}\n"
+        f"Submissions: {total_submissions} (pending: {pending_submissions})"
+    )
 
 
 # MyselfNeon
