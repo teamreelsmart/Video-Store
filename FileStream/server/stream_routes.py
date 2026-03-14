@@ -165,6 +165,29 @@ async def verify_complete_route_handler(request: web.Request):
         elif reward_type == "free_access_hours":
             await db.grant_24h_access(completed_session.get("user_id"), access_type="free")
 
+        # Referral reward on first successful verification for referred user
+        user_doc = await db.get_user(completed_session.get("user_id")) or {}
+        inviter_id = int(user_doc.get("referred_by", 0) or 0)
+        if inviter_id and inviter_id != int(completed_session.get("user_id")):
+            rewarded = await db.ensure_referral_reward(
+                inviter_id=inviter_id,
+                invited_id=completed_session.get("user_id"),
+                reward_tokens=Telegram.REFERRAL_REWARD_TOKENS,
+            )
+            if rewarded:
+                try:
+                    await FileStream.send_message(
+                        chat_id=inviter_id,
+                        text=(
+                            "🎉 Referral reward credited!\n"
+                            f"User <code>{completed_session.get('user_id')}</code> completed verification.\n"
+                            f"Reward: <b>{Telegram.REFERRAL_REWARD_TOKENS} tokens</b>."
+                        ),
+                        parse_mode="html",
+                    )
+                except Exception:
+                    pass
+
         return _render_verify_template("success", "Verification completed successfully. Reward granted once.")
 
     refreshed_session = await db.get_verification_session(code)
