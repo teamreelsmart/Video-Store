@@ -32,6 +32,7 @@ class Database:
         self.coupons = self.db.coupons
         self.coupon_redemptions = self.db.coupon_redemptions
         self.video_submissions = self.db.video_submissions
+        self.catalog_cache = self.db.catalog_cache
         self._indexes_initialized = False
 
     async def ensure_indexes(self):
@@ -45,6 +46,7 @@ class Database:
             unique=True,
         )
         await self.referrals.create_index("invited_id", unique=True)
+        await self.catalog_cache.create_index("channel_id", unique=True)
         self._indexes_initialized = True
 
     # Accepts name and username
@@ -160,6 +162,35 @@ class Database:
             await self.col.update_one({"id": id}, {"$inc": {"Links": -1}})
         elif operation == "+":
             await self.col.update_one({"id": id}, {"$inc": {"Links": 1}})
+
+
+
+    async def get_catalog_file_ids(self, channel_id, max_age_seconds=900):
+        await self.ensure_indexes()
+        cached = await self.catalog_cache.find_one({"channel_id": int(channel_id)})
+        if not cached:
+            return []
+
+        updated_at = int(cached.get("updated_at", 0))
+        now = int(time.time())
+        if updated_at + int(max_age_seconds) < now:
+            return []
+
+        return list(cached.get("file_ids", []))
+
+    async def set_catalog_file_ids(self, channel_id, file_ids):
+        await self.ensure_indexes()
+        now = int(time.time())
+        await self.catalog_cache.update_one(
+            {"channel_id": int(channel_id)},
+            {
+                "$set": {
+                    "file_ids": list(file_ids),
+                    "updated_at": now,
+                }
+            },
+            upsert=True,
+        )
 
     async def consume_token(self, user_id, amount=1):
         await self.ensure_indexes()

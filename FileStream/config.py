@@ -44,6 +44,7 @@ class Telegram:
     START_PICS = [url.strip() for url in START_PICS_STRING.split(',')]
     
     VERIFY_PIC = env.get('VERIFY_PIC', "https://i.ibb.co/5WK4tFbp/0e282ebcc464.jpg")
+    VIDEO_CATALOG_CHANNEL_ID = int(env.get("VIDEO_CATALOG_CHANNEL_ID", "0"))
     MULTI_CLIENT = False
     FLOG_CHANNEL = int(env.get("FLOG_CHANNEL", '-1003542287615'))   # Logs channel for file logs
     ULOG_CHANNEL = int(env.get("ULOG_CHANNEL", '-1003591916255'))   # Logs channel for user logs

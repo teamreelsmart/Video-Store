@@ -11,6 +11,8 @@
 
 import datetime
 import math
+import random
+import time
 from FileStream import __version__
 from FileStream.bot import FileStream
 from FileStream.config import Telegram, Server
@@ -51,8 +53,92 @@ async def show_about(update: CallbackQuery):
     )
 
 
-async def handle_menu_watch(update: CallbackQuery):
-    await show_home(update)
+def _extract_video_file_id(message):
+    if getattr(message, "video", None):
+        return message.video.file_id
+    if getattr(message, "animation", None):
+        return message.animation.file_id
+    if getattr(message, "video_note", None):
+        return message.video_note.file_id
+    return None
+
+
+async def _refresh_video_catalog_cache(bot, limit=80):
+    channel_id = int(getattr(Telegram, "VIDEO_CATALOG_CHANNEL_ID", 0) or 0)
+    if not channel_id:
+        return []
+
+    file_ids = []
+    async for post in bot.get_chat_history(channel_id, limit=int(limit)):
+        file_id = _extract_video_file_id(post)
+        if file_id:
+            file_ids.append(file_id)
+
+    if file_ids:
+        await db.set_catalog_file_ids(channel_id, file_ids)
+
+    return file_ids
+
+
+async def handle_menu_watch(bot, update: CallbackQuery):
+    access_state = await db.get_access_state(update.from_user.id) or {}
+    now = int(time.time())
+
+    premium_active = int(access_state.get("premium_until", 0) or 0) > now
+    free_access_active = int(access_state.get("free_access_until", 0) or 0) > now
+    tokens = int(access_state.get("tokens", 0) or 0)
+
+    has_access = premium_active or free_access_active or tokens > 0
+    if not has_access:
+        await update.message.reply_photo(
+            photo=Telegram.VERIFY_PIC,
+            caption=(
+                "<b>Access required to watch videos.</b>\n\n"
+                "Choose one verification option:\n"
+                "• <b>50 tokens</b>\n"
+                "• <b>24 hours access</b>"
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("50 tokens", callback_data="premium_tokens_50"),
+                        InlineKeyboardButton("24 hours access", callback_data="premium_access_24h"),
+                    ]
+                ]
+            ),
+        )
+        await update.answer("Verification required.", show_alert=True)
+        return
+
+    token_consumed = False
+    if not premium_active and not free_access_active and tokens > 0:
+        consumed = await db.consume_token(update.from_user.id, 1)
+        if not consumed:
+            await update.answer("Unable to consume token, please try again.", show_alert=True)
+            return
+        token_consumed = True
+
+    channel_id = int(getattr(Telegram, "VIDEO_CATALOG_CHANNEL_ID", 0) or 0)
+    file_ids = await db.get_catalog_file_ids(channel_id, max_age_seconds=900) if channel_id else []
+    if len(file_ids) < 5:
+        file_ids = await _refresh_video_catalog_cache(bot)
+
+    unique_ids = list(dict.fromkeys(file_ids))
+    if len(unique_ids) < 5:
+        await update.message.reply_text(
+            "Catalog is not ready yet. Ask admin to add at least 5 videos to source channel.",
+        )
+        return
+
+    selected_ids = random.sample(unique_ids, 5)
+    for file_id in selected_ids:
+        await update.message.reply_cached_media(file_id=file_id)
+
+    if token_consumed:
+        await update.answer("1 token used. Sent 5 random videos.", show_alert=True)
+    else:
+        await update.answer("Sent 5 random videos.", show_alert=True)
 
 
 async def handle_menu_submit(update: CallbackQuery):
@@ -145,7 +231,10 @@ MENU_CALLBACK_SERVICES = {
 async def cb_data(bot, update: CallbackQuery):
     callback_data = update.data
     if callback_data in MENU_CALLBACK_SERVICES:
-        await MENU_CALLBACK_SERVICES[callback_data](update)
+        if callback_data == "menu_watch":
+            await MENU_CALLBACK_SERVICES[callback_data](bot, update)
+        else:
+            await MENU_CALLBACK_SERVICES[callback_data](update)
         return
 
     usr_cmd = callback_data.split("_")
