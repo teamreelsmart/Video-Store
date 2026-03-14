@@ -63,6 +63,12 @@ class Server:
         "s" if HAS_SSL else "", FQDN, "" if NO_PORT else ":" + str(PORT)
     )
 
+    SHORTENER_PROVIDER = str(env.get("SHORTENER_PROVIDER", "direct"))
+    SHORTENER_API_KEY = str(env.get("SHORTENER_API_KEY", ""))
+    SHORTENER_DOMAIN = str(env.get("SHORTENER_DOMAIN", ""))
+    SHORTENER_TEMPLATE = str(env.get("SHORTENER_TEMPLATE", ""))
+    SHORTENER_SECRET = str(env.get("SHORTENER_SECRET", ""))
+
 # Keep-Alive URL
 KEEP_ALIVE_URL = env.get("KEEP_ALIVE_URL", "")
 

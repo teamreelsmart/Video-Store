@@ -18,6 +18,7 @@ from FileStream.utils.translation import LANG, BUTTON
 from FileStream.utils.bot_utils import gen_link
 from FileStream.utils.database import Database
 from FileStream.utils.human_readable import humanbytes
+from FileStream.utils.shortener import create_short_link, ShortenerError
 from FileStream.server.exceptions import FIleNotFound
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pyrogram.file_id import FileId, FileType, PHOTO_TYPES
@@ -70,8 +71,65 @@ async def handle_menu_help(update: CallbackQuery):
     await show_help(update)
 
 
+def _fqdn_verify_link(code, user_id):
+    return f"{Server.URL}verify/{code}?uid={int(user_id)}"
+
+
+async def _create_verify_session(user_id, reward_type, reward_value, *, step=1, previous_code=None):
+    callback_url = f"{Server.URL}verify/complete/{{code}}"
+    context = {
+        "user_id": int(user_id),
+        "step": step,
+    }
+
+    placeholder_url = callback_url.replace("{code}", "__CODE__")
+    short_data = create_short_link(placeholder_url, context)
+    short_url_template = short_data.get("short_url")
+    if not short_url_template:
+        raise ShortenerError("Shortener did not return a URL")
+
+    session = await db.create_verification_session(
+        user_id=user_id,
+        shortener_url=short_url_template,
+        step=step,
+        previous_code=previous_code,
+        reward_type=reward_type,
+        reward_value=reward_value,
+        expires_in=3600,
+    )
+
+    final_callback = callback_url.replace("{code}", session["one_time_code"])
+    context["code"] = session["one_time_code"]
+    finalized_short_data = create_short_link(final_callback, context)
+    finalized_short_url = finalized_short_data.get("short_url")
+
+    await db.verify_sessions.update_one(
+        {"one_time_code": session["one_time_code"]},
+        {"$set": {"shortner_url": finalized_short_url}},
+    )
+
+    session["shortner_url"] = finalized_short_url
+    return session
+
+
 async def handle_menu_premium(update: CallbackQuery):
-    await show_about(update)
+    await update.message.edit_text(
+        text=(
+            "<b>Choose a verification option:</b>\n\n"
+            "• <b>50 token</b>: single verification step\n"
+            "• <b>24 hours access</b>: complete step 1 then step 2"
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("50 token", callback_data="premium_tokens_50"),
+                    InlineKeyboardButton("24 hours access", callback_data="premium_access_24h"),
+                ],
+                [InlineKeyboardButton("⬅️ Back", callback_data="home")],
+            ]
+        ),
+    )
 
 
 MENU_CALLBACK_SERVICES = {
@@ -155,6 +213,54 @@ async def cb_data(bot, update: CallbackQuery):
         file_name = myfile['file_name']
         await update.answer(f"Sending File {file_name}")
         await update.message.reply_cached_media(myfile['file_id'], caption=f'**{file_name}**')
+
+    elif usr_cmd[0] == "premium":
+        if len(usr_cmd) >= 3 and usr_cmd[1] == "tokens" and usr_cmd[2] == "50":
+            try:
+                session = await _create_verify_session(
+                    user_id=update.from_user.id,
+                    reward_type="tokens",
+                    reward_value=50,
+                    step=1,
+                )
+                verify_url = _fqdn_verify_link(session["one_time_code"], update.from_user.id)
+                await update.message.reply_text(
+                    f"✅ 50 token verification link:\n{verify_url}",
+                    disable_web_page_preview=True,
+                )
+                await update.answer("Verification link generated.", show_alert=True)
+            except Exception as error:
+                await update.answer(f"Failed: {error}", show_alert=True)
+            return
+
+        if len(usr_cmd) >= 3 and usr_cmd[1] == "access" and usr_cmd[2] == "24h":
+            try:
+                step1 = await _create_verify_session(
+                    user_id=update.from_user.id,
+                    reward_type="none",
+                    reward_value=0,
+                    step=1,
+                )
+                step2 = await _create_verify_session(
+                    user_id=update.from_user.id,
+                    reward_type="free_access_hours",
+                    reward_value=24,
+                    step=2,
+                    previous_code=step1["one_time_code"],
+                )
+                link1 = _fqdn_verify_link(step1["one_time_code"], update.from_user.id)
+                link2 = _fqdn_verify_link(step2["one_time_code"], update.from_user.id)
+                await update.message.reply_text(
+                    "✅ 24 hours access verification links:\n"
+                    f"Step 1: {link1}\n"
+                    f"Step 2: {link2}\n\n"
+                    "⚠️ Complete Step 1 before opening Step 2.",
+                    disable_web_page_preview=True,
+                )
+                await update.answer("Step links generated.", show_alert=True)
+            except Exception as error:
+                await update.answer(f"Failed: {error}", show_alert=True)
+            return
     else:
         await update.message.delete()
 

@@ -15,7 +15,6 @@ import logging
 import mimetypes
 import traceback
 import jinja2
-from urllib.parse import quote_plus
 from aiohttp import web
 from aiohttp.http_exceptions import BadStatusLine
 from FileStream.bot import multi_clients, work_loads, FileStream
@@ -53,25 +52,16 @@ def _build_callback_url(request, code):
     return str(request.url.with_path(f"/verify/complete/{code}").with_query({}))
 
 
-def _build_shortner_url(session, callback_url):
-    shortner_url = (
+def _build_shortner_url(session, _callback_url):
+    return (
         session.get("shortner_url")
         or session.get("shortener_url")
         or session.get("short_url")
         or session.get("url")
     )
 
-    if not shortner_url:
-        return None
 
-    if "{callback}" in shortner_url:
-        return shortner_url.replace("{callback}", quote_plus(callback_url))
-
-    separator = "&" if "?" in shortner_url else "?"
-    return f"{shortner_url}{separator}callback={quote_plus(callback_url)}"
-
-
-def _verify_session_error(session, request):
+async def _verify_session_error(session, request):
     if not session:
         return VERIFY_ERROR_INVALID_TOKEN
 
@@ -94,10 +84,12 @@ def _verify_session_error(session, request):
         except ValueError:
             return VERIFY_ERROR_INVALID_TOKEN
 
-    expected_step = int(session.get("expected_step", 1) or 1)
     current_step = int(session.get("step", 1) or 1)
-    if current_step != expected_step or expected_step != 1:
-        return VERIFY_ERROR_WRONG_STEP
+    previous_code = session.get("previous_code")
+    if current_step > 1 and previous_code:
+        previous_session = await db.get_verification_session(previous_code)
+        if not previous_session or not previous_session.get("used"):
+            return VERIFY_ERROR_WRONG_STEP
 
     return None
 
@@ -127,13 +119,13 @@ async def root_route_handler(_):
 async def verify_route_handler(request: web.Request):
     code = request.match_info["code"]
     session = await db.get_verification_session(code)
-    error_state = _verify_session_error(session, request)
+    error_state = await _verify_session_error(session, request)
 
     if error_state == VERIFY_ERROR_LINK_USED:
         return _render_verify_template("error", "This verification link has already been used.")
 
     if error_state == VERIFY_ERROR_WRONG_STEP:
-        return _render_verify_template("error", "Wrong step order. Please complete Step 1 first.")
+        return _render_verify_template("error", "Wrong step order. Please complete the previous step first.")
 
     if error_state == VERIFY_ERROR_INVALID_TOKEN:
         return _render_verify_template("error", "This verification token is invalid or has expired.")
@@ -165,6 +157,14 @@ async def verify_complete_route_handler(request: web.Request):
 
     completed_session = await db.complete_verification_by_code(code)
     if completed_session:
+        reward_type = completed_session.get("reward_type")
+        reward_value = completed_session.get("reward_value")
+
+        if reward_type == "tokens":
+            await db.grant_50_tokens(completed_session.get("user_id"))
+        elif reward_type == "free_access_hours":
+            await db.grant_24h_access(completed_session.get("user_id"), access_type="free")
+
         return _render_verify_template("success", "Verification completed successfully. Reward granted once.")
 
     refreshed_session = await db.get_verification_session(code)

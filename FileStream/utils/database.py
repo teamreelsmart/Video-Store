@@ -10,6 +10,7 @@
 # ---------------------------------------------------
 
 import pymongo
+import secrets
 import time
 import motor.motor_asyncio
 from bson.objectid import ObjectId
@@ -212,6 +213,39 @@ class Database:
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
+
+
+    async def create_verification_session(
+        self,
+        user_id,
+        shortener_url,
+        *,
+        step=1,
+        previous_code=None,
+        reward_type="tokens",
+        reward_value=50,
+        expires_in=3600,
+    ):
+        await self.ensure_indexes()
+        now = int(time.time())
+        one_time_code = secrets.token_urlsafe(8)
+        session = {
+            "one_time_code": one_time_code,
+            "user_id": int(user_id),
+            "shortner_url": shortener_url,
+            "step": int(step),
+            "used": False,
+            "previous_code": previous_code,
+            "reward_type": reward_type,
+            "reward_value": reward_value,
+            "created_at": now,
+            "expires_at": now + int(expires_in),
+        }
+        await self.verify_sessions.insert_one(session)
+        return session
+
+    async def get_access_state(self, user_id):
+        return await self.user_access.find_one({"user_id": int(user_id)})
 
     async def mark_verification_step_complete(self, user_id, step):
         await self.ensure_indexes()
