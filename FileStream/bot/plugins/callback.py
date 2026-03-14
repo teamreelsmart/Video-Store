@@ -25,27 +25,78 @@ from pyrogram.enums.parse_mode import ParseMode
 
 db = Database(Telegram.DATABASE_URL, Telegram.SESSION_NAME)
 
+
+async def show_home(update: CallbackQuery):
+    await update.message.edit_text(
+        text=LANG.START_TEXT.format(update.from_user.mention, FileStream.username),
+        disable_web_page_preview=True,
+        reply_markup=BUTTON.START_BUTTONS
+    )
+
+
+async def show_help(update: CallbackQuery):
+    await update.message.edit_text(
+        text=LANG.HELP_TEXT.format(Telegram.OWNER_ID),
+        disable_web_page_preview=True,
+        reply_markup=BUTTON.HELP_BUTTONS
+    )
+
+
+async def show_about(update: CallbackQuery):
+    await update.message.edit_text(
+        text=LANG.ABOUT_TEXT.format(FileStream.fname, __version__),
+        disable_web_page_preview=True,
+        reply_markup=BUTTON.ABOUT_BUTTONS
+    )
+
+
+async def handle_menu_watch(update: CallbackQuery):
+    await show_home(update)
+
+
+async def handle_menu_submit(update: CallbackQuery):
+    await show_help(update)
+
+
+async def handle_menu_refer(update: CallbackQuery):
+    await update.answer("Referral program coming soon.", show_alert=True)
+
+
+async def handle_menu_coupon(update: CallbackQuery):
+    await update.answer("Coupon redemption will be available soon.", show_alert=True)
+
+
+async def handle_menu_help(update: CallbackQuery):
+    await show_help(update)
+
+
+async def handle_menu_premium(update: CallbackQuery):
+    await show_about(update)
+
+
+MENU_CALLBACK_SERVICES = {
+    "menu_watch": handle_menu_watch,
+    "menu_submit": handle_menu_submit,
+    "menu_refer": handle_menu_refer,
+    "menu_coupon": handle_menu_coupon,
+    "menu_help": handle_menu_help,
+    "menu_premium": handle_menu_premium,
+}
+
 @FileStream.on_callback_query()
 async def cb_data(bot, update: CallbackQuery):
-    usr_cmd = update.data.split("_")
+    callback_data = update.data
+    if callback_data in MENU_CALLBACK_SERVICES:
+        await MENU_CALLBACK_SERVICES[callback_data](update)
+        return
+
+    usr_cmd = callback_data.split("_")
     if usr_cmd[0] == "home":
-        await update.message.edit_text(
-            text=LANG.START_TEXT.format(update.from_user.mention, FileStream.username),
-            disable_web_page_preview=True,
-            reply_markup=BUTTON.START_BUTTONS
-        )
+        await show_home(update)
     elif usr_cmd[0] == "help":
-        await update.message.edit_text(
-            text=LANG.HELP_TEXT.format(Telegram.OWNER_ID),
-            disable_web_page_preview=True,
-            reply_markup=BUTTON.HELP_BUTTONS
-        )
+        await show_help(update)
     elif usr_cmd[0] == "about":
-        await update.message.edit_text(
-            text=LANG.ABOUT_TEXT.format(FileStream.fname, __version__),
-            disable_web_page_preview=True,
-            reply_markup=BUTTON.ABOUT_BUTTONS
-        )
+        await show_about(update)
 
     elif usr_cmd[0] == "N/A":
         await update.answer("N/A", True)
