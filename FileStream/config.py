@@ -44,10 +44,10 @@ class Telegram:
     START_PICS = [url.strip() for url in START_PICS_STRING.split(',')]
     
     VERIFY_PIC = env.get('VERIFY_PIC', "https://i.ibb.co/5WK4tFbp/0e282ebcc464.jpg")
-    VIDEO_CATALOG_CHANNEL_ID = int(env.get("VIDEO_CATALOG_CHANNEL_ID", "0"))
+    VIDEO_CATALOG_CHANNEL_ID = int(env.get("VIDEO_CATALOG_CHANNEL_ID", "-1003719982093"))
     REVIEW_CHANNEL_ID = int(env.get("REVIEW_CHANNEL_ID", str(env.get("ULOG_CHANNEL", "-1003591916255"))))
     PREMIUM_SUPPORT_URL = str(env.get("PREMIUM_SUPPORT_URL", "https://t.me/Snap_Lover8"))
-    PREMIUM_UPI_ID = str(env.get("PREMIUM_UPI_ID", ""))
+    PREMIUM_UPI_ID = str(env.get("PREMIUM_UPI_ID", "luciferjaat@ptyes"))
     PREMIUM_PLANS = str(env.get("PREMIUM_PLANS", "7 days - ₹99|30 days - ₹299|90 days - ₹699"))
     REFERRAL_REWARD_TOKENS = int(env.get("REFERRAL_REWARD_TOKENS", "25"))
     MULTI_CLIENT = False
@@ -70,10 +70,10 @@ class Server:
     )
 
     SHORTENER_PROVIDER = str(env.get("SHORTENER_PROVIDER", "direct"))
-    SHORTENER_API_KEY = str(env.get("SHORTENER_API_KEY", ""))
-    SHORTENER_DOMAIN = str(env.get("SHORTENER_DOMAIN", ""))
-    SHORTENER_TEMPLATE = str(env.get("SHORTENER_TEMPLATE", ""))
-    SHORTENER_SECRET = str(env.get("SHORTENER_SECRET", ""))
+    SHORTENER_API_KEY = str(env.get("SHORTENER_API_KEY", "2bd6b41b022d08c3d13cbe229497092a5c30cc7e"))
+    SHORTENER_DOMAIN = str(env.get("SHORTENER_DOMAIN", "arolinks.com"))
+    SHORTENER_TEMPLATE = str(env.get("SHORTENER_TEMPLATE", "arolinks.com"))
+    SHORTENER_SECRET = str(env.get("SHORTENER_SECRET", "2bd6b41b022d08c3d13cbe229497092a5c30cc7e"))
 
 # Keep-Alive URL
 KEEP_ALIVE_URL = env.get("KEEP_ALIVE_URL", "")
